@@ -48,6 +48,17 @@ def get_args():
     return parser.parse_args()
 
 
+def set_environment_variables(args):
+    """
+    Set Box Service Account Credentials as environment variables if they're provided via keyword
+    arguments rather than seeded as environment variables. This will override
+    system defaults.
+    """
+    if args.service_account:
+        os.environ['BOX_APPLICATION_CREDENTIALS'] = args.service_account
+    return
+
+
 def extract_file_name_from_source_full_path(source_full_path):
     """
     Use the file name provided in the source_full_path variable. Should be run
@@ -265,7 +276,8 @@ def create_folders(client, destination_folder_name):
 
 def main():
     args = get_args()
-    service_account = args.service_account
+    set_environment_variables(args)
+    service_account = os.environ.get('BOX_APPLICATION_CREDENTIALS')
     source_file_name = args.source_file_name
     source_folder_name = args.source_folder_name
     source_full_path = combine_folder_and_file_name(
