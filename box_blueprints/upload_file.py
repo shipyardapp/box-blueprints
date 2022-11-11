@@ -4,6 +4,7 @@ import json
 import tempfile
 import argparse
 import glob
+import code
 
 from boxsdk import Client, JWTAuth
 from boxsdk.exception import *
@@ -187,7 +188,7 @@ def upload_box_file(
                 file_id).update_contents(source_full_path)
         else:
             print(f'Failed to upload file {source_full_path}')
-            raise(e)
+            raise (e)
 
     print(f'{source_full_path} successfully uploaded to '
           f'{destination_full_path}')
@@ -211,7 +212,7 @@ def get_client(service_account):
         print(f'Error accessing Box account with pervice account '
               f'developer_token={developer_token}; client_id={client_id}; '
               f'client_secret={client_secret}')
-        raise(e)
+        raise (e)
 
 
 def get_folder_id(client, destination_folder_name):
@@ -219,12 +220,16 @@ def get_folder_id(client, destination_folder_name):
     Returns the folder obj for the Box client if it exists.
     """
     folder = None
-    search_folder = destination_folder_name.strip('/').rsplit('/', 1)[-1]
+    # Strip destination_folder_name for last subdirectory
+    # Wrap search folder in quotes for exact match
+    search_folder = '"' + \
+        destination_folder_name.strip(' / ').rsplit(' / ', 1)[-1] + '"'
     try:
         folders = client.search().query(query=search_folder,
                                         result_type='folder')
         for _folder in folders:
             folder = _folder
+            print(folder)
 
         if not folder:
             folder = create_folders(client, destination_folder_name)
@@ -271,7 +276,7 @@ def create_folders(client, destination_folder_name):
             return subfolder
     except (BoxOAuthException, BoxAPIException) as e:
         print(f'Could not create folder {destination_folder_name}')
-        raise(e)
+        raise (e)
 
 
 def main():
@@ -289,6 +294,7 @@ def main():
 
     client = get_client(service_account=service_account)
     folder = '0'
+    code.interact(local=locals())
     if destination_folder_name:
         _folder = get_folder_id(
             client, destination_folder_name=destination_folder_name)
