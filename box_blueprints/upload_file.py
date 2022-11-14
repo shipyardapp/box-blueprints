@@ -2,11 +2,16 @@ import os
 import re
 import json
 import argparse
-import glob
+import sys
 import shipyard_utils as shipyard
 
 from boxsdk import Client, JWTAuth
 from boxsdk.exception import *
+
+try:
+    import exit_codes as ec
+except BaseException:
+    from . import exit_codes as ec
 
 import logging
 logging.getLogger('boxsdk').setLevel(logging.CRITICAL)
@@ -71,6 +76,9 @@ def upload_box_file(
     try:
         new_file = client.folder(folder_id).upload(
             source_full_path, file_name=destination_file_name)
+    except FileNotFoundError as e:
+        print(f'{source_full_path} does not exist. Please check for typos in the folder or file name and try again.')
+        sys.exit(ec.EXIT_CODE_FILE_DOES_NOT_EXIST)
     except Exception as e:
         if hasattr(e, 'code') and e.code == 'item_name_in_use':
             file_id = e.context_info['conflicts']['id']
@@ -99,20 +107,18 @@ def get_client(service_account):
         client.user().get()
         return client
     except BoxOAuthException as e:
-        print(f'Error accessing Box account with pervice account '
-              f'developer_token={developer_token}; client_id={client_id}; '
-              f'client_secret={client_secret}')
-        raise (e)
+        print(f'Error accessing Box account with the provided service account. Please check credentials for typos and try again.')
+        sys.exit(ec.EXIT_CODE_INVALID_CREDENTIALS)
 
 
 def get_single_folder_id(client, folder, folder_filter=None):
     """
-    Returns a folder id for the provided folder name and folder_folder id.
+    Returns a folder id for the provided folder name, filtered by the specified folder_filter.
     """
     # Wrap in quotes for exact match
     folder_id = None
     search_folder = '"' + folder + '"'
-    print(f'Looking up {folder}')
+    print(f'Looking up folder {search_folder}')
     folder_matches = client.search().query(
         query=search_folder,
         result_type='folder',
@@ -121,25 +127,20 @@ def get_single_folder_id(client, folder, folder_filter=None):
     for folder_match in folder_matches:
         if folder_match.name == folder:
             folder_id = folder_match.id
-    print(f'Folder ID for {folder} is {folder_id}')
+    print(f'Folder ID for {search_folder} is {folder_id}')
     return folder_id
 
 
 def get_folder_id(client, destination_folder_name):
     """
-    Returns the folder obj for the Box client if it exists.
+    Loops through the entire folder structure of destination_folder_name to find the right id.
     """
     folder = None
-    # Strip destination_folder_name for last subdirectory
-    # Wrap search folder in quotes for exact match
-
     folder_parts = destination_folder_name.strip('/').rsplit('/')
-    print(folder_parts)
 
     for index, folder in enumerate(folder_parts):
         if index == 0:
             folder_id = get_single_folder_id(client, folder)
-            print(folder_id)
         else:
             folder_id = get_single_folder_id(
                 client, folder, folder_filter=folder_id)
@@ -147,8 +148,8 @@ def get_folder_id(client, destination_folder_name):
     if folder_id:
         return folder_id
     else:
-        # sys.exit(ec.EXIT_CODE_FOLDER_DOES_NOT_EXIST)
-        return create_folders(client, destination_folder_name)
+        print('The folder name you specified either has a typo or has not been shared with this App.')
+        sys.exit(ec.EXIT_CODE_FOLDER_DOES_NOT_EXIST)
 
 
 def create_folder(client, folder_name, subfolder='0'):
@@ -204,7 +205,6 @@ def main():
 
     client = get_client(service_account=service_account)
     folder = '0'
-    # code.interact(local=locals())
     if destination_folder_name:
         folder_id = get_folder_id(
             client, destination_folder_name=destination_folder_name)
