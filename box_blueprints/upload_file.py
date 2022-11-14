@@ -215,6 +215,26 @@ def get_client(service_account):
         raise (e)
 
 
+def get_single_folder_id(client, folder, folder_filter=None):
+    """
+    Returns a folder id for the provided folder name and folder_folder id.
+    """
+    # Wrap in quotes for exact match
+    folder_id = None
+    search_folder = '"' + folder + '"'
+    print(f'Looking up {folder}')
+    folder_matches = client.search().query(
+        query=search_folder,
+        result_type='folder',
+        ancestor_folder_ids=folder_filter)
+
+    for folder_match in folder_matches:
+        if folder_match.name == folder:
+            folder_id = folder_match.id
+    print(f'Folder ID for {folder} is {folder_id}')
+    return folder_id
+
+
 def get_folder_id(client, destination_folder_name):
     """
     Returns the folder obj for the Box client if it exists.
@@ -222,23 +242,22 @@ def get_folder_id(client, destination_folder_name):
     folder = None
     # Strip destination_folder_name for last subdirectory
     # Wrap search folder in quotes for exact match
-    search_folder = '"' + \
-        destination_folder_name.strip(' / ').rsplit(' / ', 1)[-1] + '"'
-    try:
-        folders = client.search().query(query=search_folder,
-                                        result_type='folder')
-        for _folder in folders:
-            folder = _folder
-            print(folder)
 
-        if not folder:
-            folder = create_folders(client, destination_folder_name)
-        return folder
-    except (BoxOAuthException, BoxAPIException) as e:
-        print(f'The specified folder {destination_folder_name} does not exist')
-        create_folders(client, destination_folder_name)
+    folder_parts = destination_folder_name.strip('/').rsplit('/')
+    print(folder_parts)
 
-    if not folder:
+    for index, folder in enumerate(folder_parts):
+        if index == 0:
+            folder_id = get_single_folder_id(client, folder)
+            print(folder_id)
+        else:
+            folder_id = get_single_folder_id(
+                client, folder, folder_filter=folder_id)
+
+    if folder_id:
+        return folder_id
+    else:
+        sys.exit(ec.EXIT_CODE_FOLDER_DOES_NOT_EXIST)
         return create_folders(client, destination_folder_name)
 
 
@@ -294,12 +313,10 @@ def main():
 
     client = get_client(service_account=service_account)
     folder = '0'
-    code.interact(local=locals())
+    # code.interact(local=locals())
     if destination_folder_name:
-        _folder = get_folder_id(
+        folder_id = get_folder_id(
             client, destination_folder_name=destination_folder_name)
-        if _folder:
-            folder = _folder.id
 
     if source_file_name_match_type == 'regex_match':
         file_names = find_all_local_file_names(source_folder_name)
@@ -327,7 +344,7 @@ def main():
 
         upload_box_file(source_full_path=source_full_path,
                         destination_full_path=destination_full_path,
-                        client=client, folder_id=folder)
+                        client=client, folder_id=folder_id)
 
 
 if __name__ == '__main__':
