@@ -152,43 +152,6 @@ def get_folder_id(client, destination_folder_name):
         sys.exit(ec.EXIT_CODE_FOLDER_DOES_NOT_EXIST)
 
 
-def create_folder(client, folder_name, subfolder='0'):
-    """
-    Creates the folder for the Box client.
-    """
-    # Check if we're creating in the root folder
-    subfolder_id = '0'
-    if subfolder != '0':
-        subfolder_id = subfolder.id
-
-    try:
-        subfolder = client.folder(subfolder_id).create_subfolder(folder_name)
-    except Exception as e:
-        print(f'Folder {folder_name} already exists')
-        folder_id = e.context_info['conflicts'][0]['id']
-        subfolder = client.folder(folder_id=folder_id).get()
-
-    return subfolder
-
-
-def create_folders(client, destination_folder_name):
-    """
-    Creates the folder destination_folder_name for the Box client.
-    """
-    try:
-        folders = destination_folder_name.split('/')
-        if len(folders) > 0:
-            subfolder = create_folder(client, folders[0])
-
-            for folder in folders[1:]:
-                subfolder = create_folder(client, folder, subfolder)
-
-            return subfolder
-    except (BoxOAuthException, BoxAPIException) as e:
-        print(f'Could not create folder {destination_folder_name}')
-        raise (e)
-
-
 def main():
     args = get_args()
     set_environment_variables(args)
@@ -219,7 +182,7 @@ def main():
         for index, file_name in enumerate(matching_file_names):
             destination_full_path = shipyard.files.determine_destination_full_path(
                 destination_folder_name=destination_folder_name,
-                destination_file_name=args.destination_file_name,
+                destination_file_name=destination_file_name,
                 source_full_path=file_name, file_number=index + 1)
 
             print(f'Uploading file {index+1} of {len(matching_file_names)}')
