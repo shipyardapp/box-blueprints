@@ -125,6 +125,7 @@ def get_single_folder_id(client, folder, folder_filter=None):
         ancestor_folder_ids=folder_filter)
 
     for folder_match in folder_matches:
+        print(folder_match)
         if folder_match.name == folder:
             folder_id = folder_match.id
     print(f'Folder ID for {search_folder} is {folder_id}')
@@ -149,6 +150,9 @@ def get_folder_id(client, destination_folder_name):
         return folder_id
     else:
         print('The folder name you specified either has a typo or has not been shared with this App.')
+        # This is a known issue
+        # https://support.box.com/hc/en-us/community/posts/360049139974-Using-the-search-API-doesn-t-return-new-creations
+        print('If the folder was recently created, it make take up to 10 minutes to become available.')
         sys.exit(ec.EXIT_CODE_FOLDER_DOES_NOT_EXIST)
 
 
