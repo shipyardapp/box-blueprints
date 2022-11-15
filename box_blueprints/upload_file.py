@@ -193,7 +193,7 @@ def main():
             upload_box_file(
                 source_full_path=file_name,
                 destination_full_path=destination_full_path,
-                client=client, folder_id=folder)
+                client=client, folder_id=folder_id)
 
     else:
         destination_full_path = shipyard.files.determine_destination_full_path(
