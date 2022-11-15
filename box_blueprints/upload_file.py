@@ -1,12 +1,17 @@
 import os
 import re
 import json
-import tempfile
 import argparse
-import glob
+import sys
+import shipyard_utils as shipyard
 
 from boxsdk import Client, JWTAuth
 from boxsdk.exception import *
+
+try:
+    import exit_codes as ec
+except BaseException:
+    from . import exit_codes as ec
 
 import logging
 logging.getLogger('boxsdk').setLevel(logging.CRITICAL)
@@ -59,115 +64,6 @@ def set_environment_variables(args):
     return
 
 
-def extract_file_name_from_source_full_path(source_full_path):
-    """
-    Use the file name provided in the source_full_path variable. Should be run
-    only if a destination_file_name is not provided.
-    """
-    destination_file_name = os.path.basename(source_full_path)
-    return destination_file_name
-
-
-def enumerate_destination_file_name(destination_file_name, file_number=1):
-    """
-    Append a number to the end of the provided destination file name.
-    Only used when multiple files are matched to, preventing the destination
-    file from being continuously overwritten.
-    """
-    if re.search(r'\.', destination_file_name):
-        destination_file_name = re.sub(
-            r'\.', f'_{file_number}.', destination_file_name, 1)
-    else:
-        destination_file_name = f'{destination_file_name}_{file_number}'
-    return destination_file_name
-
-
-def determine_destination_file_name(
-    *,
-    source_full_path,
-    destination_file_name,
-        file_number=None):
-    """
-    Determine if the destination_file_name was provided, or should be extracted
-    from the source_file_name, or should be enumerated for multiple file
-    uploads.
-    """
-    if destination_file_name:
-        if file_number:
-            destination_file_name = enumerate_destination_file_name(
-                destination_file_name, file_number)
-        else:
-            destination_file_name = destination_file_name
-    else:
-        destination_file_name = extract_file_name_from_source_full_path(
-            source_full_path)
-
-    return destination_file_name
-
-
-def clean_folder_name(folder_name):
-    """
-    Cleans folders name by removing duplicate '/' as well as leading and
-    trailing '/' characters.
-    """
-    folder_name = folder_name.strip('/')
-    if folder_name != '':
-        folder_name = os.path.normpath(folder_name)
-    return folder_name
-
-
-def combine_folder_and_file_name(folder_name, file_name):
-    """
-    Combine together the provided folder_name and file_name into one path
-    variable.
-    """
-    combined_name = os.path.normpath(
-        f'{folder_name}{"/" if folder_name else ""}{file_name}')
-    combined_name = os.path.normpath(combined_name)
-
-    return combined_name
-
-
-def determine_destination_full_path(
-        destination_folder_name,
-        destination_file_name,
-        source_full_path,
-        file_number=None):
-    """
-    Determine the final destination name of the file being uploaded.
-    """
-    destination_file_name = determine_destination_file_name(
-        destination_file_name=destination_file_name,
-        source_full_path=source_full_path,
-        file_number=file_number)
-    destination_full_path = combine_folder_and_file_name(
-        destination_folder_name, destination_file_name)
-    return destination_full_path
-
-
-def find_all_local_file_names(source_folder_name):
-    """
-    Returns a list of all files that exist in the current working directory,
-    filtered by source_folder_name if provided.
-    """
-    cwd = os.getcwd()
-    cwd_extension = os.path.normpath(f'{cwd}/{source_folder_name}/**')
-    file_names = glob.glob(cwd_extension, recursive=True)
-    return [file_name for file_name in file_names if os.path.isfile(file_name)]
-
-
-def find_all_file_matches(file_names, file_name_re):
-    """
-    Return a list of all file_names that matched the regular expression.
-    """
-    matching_file_names = []
-    for file in file_names:
-        if re.search(file_name_re, file):
-            matching_file_names.append(file)
-
-    return matching_file_names
-
-
 def upload_box_file(
         client,
         source_full_path,
@@ -180,6 +76,9 @@ def upload_box_file(
     try:
         new_file = client.folder(folder_id).upload(
             source_full_path, file_name=destination_file_name)
+    except FileNotFoundError as e:
+        print(f'{source_full_path} does not exist. Please check for typos in the folder or file name and try again.')
+        sys.exit(ec.EXIT_CODE_FILE_DOES_NOT_EXIST)
     except Exception as e:
         if hasattr(e, 'code') and e.code == 'item_name_in_use':
             file_id = e.context_info['conflicts']['id']
@@ -187,7 +86,7 @@ def upload_box_file(
                 file_id).update_contents(source_full_path)
         else:
             print(f'Failed to upload file {source_full_path}')
-            raise(e)
+            raise (e)
 
     print(f'{source_full_path} successfully uploaded to '
           f'{destination_full_path}')
@@ -208,70 +107,52 @@ def get_client(service_account):
         client.user().get()
         return client
     except BoxOAuthException as e:
-        print(f'Error accessing Box account with pervice account '
-              f'developer_token={developer_token}; client_id={client_id}; '
-              f'client_secret={client_secret}')
-        raise(e)
+        print(f'Error accessing Box account with the provided service account. Please check credentials for typos and try again.')
+        sys.exit(ec.EXIT_CODE_INVALID_CREDENTIALS)
+
+
+def get_single_folder_id(client, folder, folder_filter=None):
+    """
+    Returns a folder id for the provided folder name, filtered by the specified folder_filter.
+    """
+    # Wrap in quotes for exact match
+    folder_id = None
+    search_folder = '"' + folder + '"'
+    print(f'Looking up folder {search_folder}')
+    folder_matches = client.search().query(
+        query=search_folder,
+        result_type='folder',
+        ancestor_folder_ids=folder_filter)
+
+    for folder_match in folder_matches:
+        if folder_match.name == folder:
+            folder_id = folder_match.id
+    print(f'Folder ID for {search_folder} is {folder_id}')
+    return folder_id
 
 
 def get_folder_id(client, destination_folder_name):
     """
-    Returns the folder obj for the Box client if it exists.
+    Loops through the entire folder structure of destination_folder_name to find the right id.
     """
     folder = None
-    search_folder = destination_folder_name.strip('/').rsplit('/', 1)[-1]
-    try:
-        folders = client.search().query(query=search_folder,
-                                        result_type='folder')
-        for _folder in folders:
-            folder = _folder
+    folder_parts = destination_folder_name.strip('/').rsplit('/')
 
-        if not folder:
-            folder = create_folders(client, destination_folder_name)
-        return folder
-    except (BoxOAuthException, BoxAPIException) as e:
-        print(f'The specified folder {destination_folder_name} does not exist')
-        create_folders(client, destination_folder_name)
+    for index, folder in enumerate(folder_parts):
+        if index == 0:
+            folder_id = get_single_folder_id(client, folder)
+        else:
+            folder_id = get_single_folder_id(
+                client, folder, folder_filter=folder_id)
 
-    if not folder:
-        return create_folders(client, destination_folder_name)
-
-
-def create_folder(client, folder_name, subfolder='0'):
-    """
-    Creates the folder for the Box client.
-    """
-    # Check if we're creating in the root folder
-    subfolder_id = '0'
-    if subfolder != '0':
-        subfolder_id = subfolder.id
-
-    try:
-        subfolder = client.folder(subfolder_id).create_subfolder(folder_name)
-    except Exception as e:
-        print(f'Folder {folder_name} already exists')
-        folder_id = e.context_info['conflicts'][0]['id']
-        subfolder = client.folder(folder_id=folder_id).get()
-
-    return subfolder
-
-
-def create_folders(client, destination_folder_name):
-    """
-    Creates the folder destination_folder_name for the Box client.
-    """
-    try:
-        folders = destination_folder_name.split('/')
-        if len(folders) > 0:
-            subfolder = create_folder(client, folders[0])
-
-            for folder in folders[1:]:
-                subfolder = create_folder(client, folder, subfolder)
-
-            return subfolder
-    except (BoxOAuthException, BoxAPIException) as e:
-        print(f'Could not create folder {destination_folder_name}')
-        raise(e)
+    if folder_id:
+        return folder_id
+    else:
+        print('The folder name you specified either has a typo or has not been shared with this App.')
+        # This is a known issue
+        # https://support.box.com/hc/en-us/community/posts/360049139974-Using-the-search-API-doesn-t-return-new-creations
+        print('If the folder was recently created, it make take up to 10 minutes to become available.')
+        sys.exit(ec.EXIT_CODE_FOLDER_DOES_NOT_EXIST)
 
 
 def main():
@@ -280,48 +161,48 @@ def main():
     service_account = os.environ.get('BOX_APPLICATION_CREDENTIALS')
     source_file_name = args.source_file_name
     source_folder_name = args.source_folder_name
-    source_full_path = combine_folder_and_file_name(
+    source_full_path = shipyard.files.combine_folder_and_file_name(
         folder_name=f'{os.getcwd()}/{source_folder_name}',
         file_name=source_file_name)
     destination_file_name = args.destination_file_name
-    destination_folder_name = clean_folder_name(args.destination_folder_name)
+    destination_folder_name = shipyard.files.clean_folder_name(
+        args.destination_folder_name)
     source_file_name_match_type = args.source_file_name_match_type
 
     client = get_client(service_account=service_account)
     folder = '0'
     if destination_folder_name:
-        _folder = get_folder_id(
+        folder_id = get_folder_id(
             client, destination_folder_name=destination_folder_name)
-        if _folder:
-            folder = _folder.id
 
     if source_file_name_match_type == 'regex_match':
-        file_names = find_all_local_file_names(source_folder_name)
-        matching_file_names = find_all_file_matches(
+        file_names = shipyard.files.find_all_local_file_names(
+            source_folder_name)
+        matching_file_names = shipyard.files.find_all_file_matches(
             file_names, re.compile(source_file_name))
         print(f'{len(matching_file_names)} files found. Preparing to upload...')
 
         for index, file_name in enumerate(matching_file_names):
-            destination_full_path = determine_destination_full_path(
+            destination_full_path = shipyard.files.determine_destination_full_path(
                 destination_folder_name=destination_folder_name,
-                destination_file_name=args.destination_file_name,
+                destination_file_name=destination_file_name,
                 source_full_path=file_name, file_number=index + 1)
 
             print(f'Uploading file {index+1} of {len(matching_file_names)}')
             upload_box_file(
                 source_full_path=file_name,
                 destination_full_path=destination_full_path,
-                client=client, folder_id=folder)
+                client=client, folder_id=folder_id)
 
     else:
-        destination_full_path = determine_destination_full_path(
+        destination_full_path = shipyard.files.determine_destination_full_path(
             destination_folder_name=destination_folder_name,
             destination_file_name=args.destination_file_name,
             source_full_path=source_full_path)
 
         upload_box_file(source_full_path=source_full_path,
                         destination_full_path=destination_full_path,
-                        client=client, folder_id=folder)
+                        client=client, folder_id=folder_id)
 
 
 if __name__ == '__main__':
