@@ -125,7 +125,6 @@ def get_single_folder_id(client, folder, folder_filter=None):
         ancestor_folder_ids=folder_filter)
 
     for folder_match in folder_matches:
-        print(folder_match)
         if folder_match.name == folder:
             folder_id = folder_match.id
     print(f'Folder ID for {search_folder} is {folder_id}')
